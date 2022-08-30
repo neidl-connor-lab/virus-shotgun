@@ -1,5 +1,5 @@
-# characterize-virus
-Characterize virus stocks
+# virus-shotgun
+Characterize total RNA-seq of virus stocks 
 
 ## Setup
 
