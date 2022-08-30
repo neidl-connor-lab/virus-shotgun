@@ -106,7 +106,7 @@ else
 fi
 
 # install Kraken2 standard database
-KDB="$RESOURCES/kraken2"
+KDB="$RESOURCES/kraken2db"
 mesg "Building Kraken2 database: $KDB"
 mkdir -p "$KDB"
 CMD="kraken2-build --threads 16 --standard --db $KDB"
