@@ -1,9 +1,8 @@
 #!/bin/bash -l
 
 # qsub options
-#$ -l h_rt=48:00:00
-#$ -l mem_per_core=12G
-#$ -pe omp 16
+#$ -l h_rt=24:00:00
+#$ -l mem_total=1000G
 #$ -j y
 #$ -o log-$JOB_NAME.qlog
 
@@ -20,19 +19,26 @@ checkcmd () {
   fi
 }
 
-# default values and help message
-RESOURCES="pipeline"
-HELP="usage: qsub -P PROJECT -N JOBNAME $(basename "$0") -r RESOURCES
+# pre-set variables
+BDIR="pipeline/indices"
+LOFREQ="pipeline/lofreq"
+KDIR="pipeline/kraken2db"
+KLINK="https://genome-idx.s3.amazonaws.com/kraken/k2_standard_20221209.tar.gz"
+# help message
+HELP="usage: qsub -P PROJECT -N JOBNAME $0 -f FASTA -b BOWTIE
 
 arguments:
-  -r resources directory (default: $RESOURCES)
+  -f virus genome FASTA file
+  -b bowtie2 index name
   -h show this message and exit"
 
 # parsing arguments
-while getopts ":hr:" opt
+while getopts ":hf:b:" opt
 do
   case ${opt} in
-    r ) RESOURCES="${OPTARG}"
+    f ) FASTA="${OPTARG}"
+      ;;
+    b ) BOWTIE="${OPTARG}"
       ;;
     h ) echo "${HELP}" && exit 0
       ;;
@@ -53,102 +59,117 @@ echo "=========================================================="
 echo ""
 
 ## check inputs -------------------------------------------------
-mesg "STEP 0: CHECKING INPUTS"
+# check for Kraken2 install
+if [ -z "$(which kraken2 2> /dev/null)" ]
+then
+  err "No Kraken2 detected. Please install before using."
+fi
 
-# create directory for resources
-if [ -z "$RESOURCES" ]
+# if no bowtie2, load module
+if [ -z "$(bowtie2 --version 2> /dev/null)" ]
 then
-  err "No resources directory provided"
-elif [ -d "$RESOURCES" ]
+  module load bowtie2
+  checkcmd "Loading bowtie2"
+fi
+
+# if no samtools, load module
+if [ -z "$(samtools version 2> /dev/null)" ]
 then
-  mesg "Valide resources directory: $RESOURCES"
+  module load samtools
+  checkcmd "Loading samtools"
+fi
+
+# check reference FASTA
+if [ -z "$FASTA" ]
+then
+  err "No reference FASTA provided"
+elif [ -f "$FASTA" ]
+then
+  mesg "Valid reference FASTA file: $FASTA"
 else
-  mesg "Creating resource directory: $RESOURCES"
-  mkdir -p "$RESOURCES"
+  err "Invalid reference FASTA file: $FASTA"
+fi
+
+# check that bowtie prefix was provided
+if [ -z "$BOWTIE" ]
+then
+  err "No bowtie2 index name provided"
+else
+  mesg "Bowtie2 index prefix: $BOWTIE"
 fi
 
 # done checking inputs!
 mesg "Done checking inputs!"
 echo ""
 
-## install Kraken2 ----------------------------------------------
-mesg "STEP 1: SET UP KRAKEN2"
-
-# if Kraken2 is not installed, install it
-if [ -z "$(which kraken2 2> /dev/null)" ]
-then
-  mesg "Kraken2 installation not detected; installing: $HOME/kraken2"
-  
-  # download and extract Kraken2 v2.1.2
-  wget --quiet "https://github.com/DerrickWood/kraken2/archive/refs/tags/v2.1.2.tar.gz"
-  tar -xf "v2.1.2.tar.gz"
-  
-  # clean up tarball
-  rm "v2.1.2.tar.gz"
-  
-  # install to ~/kraken2; main scripts at ~/bin
-  cd "kraken2-2.1.2"
-  mkdir -p "$HOME/kraken2"
-  ./install_kraken2.sh $HOME/kraken2
-  cp $HOME/kraken2/kraken2{,-build,-inspect} $HOME/bin
-  cd ..
-  rm -r "kraken2-2.1.2"
-  
-  # check again for Kraken2 in $PATH
-  # fail if not found
-  if [ -z "$(which kraken2 2> /dev/null)" ]
-  then
-    err "Attempted Kraken2 installation failed"
-  fi
-  mesg "Kraken2 installed!"
-else
-  mesg "Kraken2 detected: $(which kraken2)"
+## unpack LoFreq if necessary -----------------------------------
+# check for lofreq tarball
+if [ -f "$LOFREQ.tar.bz2" ]
+then 
+  mesg "LoFreq tarball detected. Expanding."
+  tar -xf "$LOFREQ.tar.bz2" -C "$(dirname $LOFREQ)"
+  checkcmd "LoFreq decompression"
+  # remove tarball
+  rm "$LOFREQ.tar.bz2"
 fi
 
-# install Kraken2 standard database
-KDB="$RESOURCES/kraken2db"
-mesg "Building Kraken2 database: $KDB"
-mkdir -p "$KDB"
-CMD="kraken2-build --threads 16 --standard --db $KDB"
-mesg "CMD: $CMD"
-eval "$CMD"
-checkcmd "Building Kraken2 database"
-
-# clean up Kraken2's mess
-mesg "Clean up installation"
-CMD="kraken2-build --threads 16 --clean --db $KDB"
-mesg "CMD: $CMD"
-eval "$CMD"
-checkcmd "Cleaning Kraken2 database"
-
-# done with Kraken2 check
-mesg "Kraken2 setup complete!"
+# check that the lofreq executable works
+if [ -z "$($LOFREQ/lofreq version 2> /dev/null)" ]
+then
+  err "Problem with LoFreq: $LOFREQ"
+else
+  mesg "LoFreq is ready to go!"
+fi
 echo ""
 
-## install vodka ------------------------------------------------
-mesg "STEP 2: SET UP VODKA"
+## set up Kraken2 if necessary ----------------------------------
+# check for kraken dir; should contain 4 files
+if [ -d "$KDIR" ] && [ "$(ls -1 $KDIR 2> /dev/null | wc -l)" -eq 4 ]
+then
+  mesg "Kraken2 database is ready to go!"
+# if any problem with the folder or it doesn't exists, make a new db
+else
+  mesg "Setting up the Kraken2 database. This will take a while!"
+  # remove the directory if it exists
+  if [ -d "$KDIR" ]
+  then
+    rm -r "$KDIR"
+  fi
+  
+  # move into the pipeline directory and pull tarball
+  cd "pipeline/"
+  mesg "Pulling database tarball..."
+  wget --quiet "$KLINK"
+  checkcmd "Pulling tarball"
+  
+  # expand the tarball
+  mesg "Expanding database tarball..."
+  tar -xf "$(basename $KLINK)"
+  checkcmd "Expanding tarball"
+  
+  # clean up and move back up
+  rm "$(basename $KLINK)"
+  mv "$(basename $KLINK .tar.gz)" "$KDIR"
+  cd ..
+fi
+echo ""
 
-# install weblogo
-mesg "Installing weblogo"
-CMD="pip3 install --user weblogo"
+## make index ---------------------------------------------------
+mesg "Creating Bowtie2 index: $BDIR/$BOWTIE"
+
+# create directory for bowtie2 if it doesn't already exist
+if [ ! -d "$BDIR" ]
+then
+  mkdir -p "$BDIR"
+fi
+
+# build command and execute
+CMD="bowtie2-build --quiet '$FASTA' '$BDIR/$BOWTIE'"
 mesg "CMD: $CMD"
 eval "$CMD"
-checkcmd "weblogo installation"
-
-# download VODKA and set up
-mesg "Installing VODKA to $RESOURCES"
-wget --quiet "https://github.com/itmat/VODKA/archive/refs/tags/v0.1f.tar.gz"
-tar -xf "v0.1f.tar.gz"
-rm "v0.1f.tar.gz"
-mv "VODKA-0.1f/scripts" "$RESOURCES/vodka"
-rm -r "VODKA-0.1f"
-
-# done with VODKA setup
-mesg "VODKA setup complete!"
+checkcmd "Bowtie2 index"
 echo ""
 
 ## all done -----------------------------------------------------
 mesg "Setup complete!"
 module list
-echo ""
-

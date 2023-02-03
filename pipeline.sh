@@ -1,9 +1,8 @@
 #!/bin/bash -l
 
 # qsub options
-#$ -l h_rt=48:00:00
-#$ -l mem_per_core=12G
-#$ -pe omp 16
+#$ -l h_rt=24:00:00
+#$ -pe omp 4
 #$ -j y
 #$ -o log-$JOB_NAME.qlog
 
@@ -20,41 +19,37 @@ checkcmd () {
   fi
 }
 
-# default values and help message
-KDB="$(dirname "$0")/pipeline/kraken2db"
-VODKA="$(dirname "$0")/pipeline/vodka/VODKA"
-HELP="usage: qsub -P PROJECT -N JOBNAME $(basename "$0") -o OUTPUT -x R1 -y R2 -b BOWTIE2 -f FASTA [-k KRAKEN2 -v VODKA]
+# pre-set variables
+LOFREQ="pipeline/lofreq/lofreq"
+KDB="pipeline/kraken2db"
+# help message
+HELP="usage: qsub -P PROJECT -N JOBNAME $0 -i INDEX -f FASTA -s SAMPLE -x R1 [-y R2]
+Please submit the job from the pipeline directory!
 
-arguments (options):
-  -o output directory
-  -x R1 FASTQ file
-  -y R2 FASTQ file
-  -b bowtie2 index
-  -f virus reference FASTA
-  -k kraken2 database (default: $KDB)
-  -v VODKA installation (default: $VODKA)
-  -h show this message and exit
+arguments:
+  -i bowtie2 index path and prefix
+  -f reference FASTA
+  -o output directory (e.g., sample ID)
+  -x FASTQ file; R1 file if paired reads
+  -y [OPTIONAL] R2 FASTQ file if paired reads
+  -h print this message and exit
 "
 
 # parsing arguments
-while getopts ":ho:x:y:b:f:k:v:" opt 
+while getopts ":hi:f:o:s:x:y:" opt 
 do 
   case ${opt} in 
+    i ) IDX="${OPTARG}"
+      ;;
+    f ) REFSEQ="${OPTARG}"
+      ;;
     o ) ODIR="${OPTARG}"
       ;;
     x ) R1="${OPTARG}"
       ;;
     y ) R2="${OPTARG}"
       ;;
-    b ) BOWTIE2="${OPTARG}"
-      ;;
-    f ) FASTA="${OPTARG}"
-      ;;
-    k ) KDB="${OPTARG}"
-      ;;
-    v ) VODKA="${OPTARG}"
-      ;;
-    h ) echo "${HELP}" && exit 0
+    h ) echo "$HELP" && exit 0
       ;;
     \? ) err "Invalid option ${opt}\n${HELP}"
       ;;
@@ -67,24 +62,72 @@ echo "=========================================================="
 echo "Start date: $(date)"
 echo "Running on node: $(hostname)"
 echo "Current directory: $(pwd)"
-echo "Job name: $JOB_NAME"
-echo "Job ID: $JOB_ID"
+echo "Job name : $JOB_NAME"
+echo "Job ID : $JOB_ID"
 echo "=========================================================="
 echo ""
 
 ## check inputs -------------------------------------------------
 mesg "STEP 0: CHECKING INPUTS"
 
-# check kraken2 is in $PATH
-if [ -z "$(which kraken2 2> /dev/null)"]
+# if no kraken, fail
+if [ -z "$(which kraken2 2> /dev/null)" ]
 then
-  err "kraken2 not found"
+  err "No Kraken2 found. Please install and try again."
+fi
+
+# if no bowtie2, load module
+if [ -z "$(bowtie2 --version 2> /dev/null)" ]
+then
+  module load bowtie2
+  checkcmd "Loading bowtie2"
+fi
+
+# if no samtools, load module
+if [ -z "$(samtools version 2> /dev/null)" ]
+then
+  module load samtools
+  checkcmd "Loading samtools"
+fi
+
+# double-check that lofreq exists
+if [ -z "$($LOFREQ version 2> /dev/null)" ]
+then
+  err "LoFreq error: $LOFREQ"
+fi
+
+# bowtie2 index should have 6 files
+if [ -z "$IDX" ]
+then
+  err "No bowtie2 index provided"
+elif [ "$(ls -1 ${IDX}.* 2> /dev/null | wc -l)" -eq 6 ]
+then
+  mesg "Bowtie2 index: $IDX"
+else
+  err "Invalid bowtie2 index; run setup.sh first: $IDX"
+fi
+
+# kraken2 db shoudl have 4 files
+if [ "$(ls -1 $KDB 2> /dev/null | wc -l)" -ne 4 ]
+then
+  err "Invalid Kraken2 database; rerun setup.sh"
+fi
+
+# reference sequence
+if [ -z "$REFSEQ" ]
+then
+  err "No reference FASTA provided"
+elif [ -f "$REFSEQ" ]
+then
+  mesg "Reference FASTA: $REFSEQ"
+else
+  err "Invalid reference FASTA: $REFSEQ"
 fi
 
 # output directory
 if [ -z "$ODIR" ]
 then
-  err "No output directory provided."
+  err "No output directory provided"
 elif [ -d "$ODIR" ]
 then
   mesg "Valid output directory: $ODIR"
@@ -93,124 +136,151 @@ else
   mkdir -p "$ODIR"
 fi
 
-# R1 FASTQ file
+# R1/R0 FASTQ file
 if [ -z "$R1" ]
 then
-  err "No R1 FASTQ file provided"
+  err "No FASTQ file provided (-x)"
 elif [ -f "$R1" ]
 then
-  mesg "Valid R1 FASTQ file: $R1"
+  mesg "First FASTQ file: $R1"
 else
-  err "Invalid R1 FASTQ file: $R1"
+  err "Invalid first FASTQ file: $R1"
 fi
 
-# R2 FASTQ file
+# check for R2 FASTQ file
 if [ -z "$R2" ]
-then
-  err "No R2 FASTQ file provided"
+then 
+  mesg "Only 1 FASTQ file detected. Running as unpaired."
 elif [ -f "$R2" ]
 then
-  mesg "Valid R2 FASTQ file: $R2"
+  mesg "Second FASTQ file: $R2"
 else
-  err "Invalid R2 FASTQ file: $R2"
-fi
-
-# bowtie2 index
-if [ -z "$BOWTIE2" ]
-then
-  err "No bowtie2 index provided"
-elif [ "$(ls -1 ${BOWTIE2}*.bt2 | wc -l)" -eq "6" ]
-then
-  mesg "Valid bowtie2 index: $BOWTIE2"
-else
-  err "Invalid bowtie2 index: $BOWTIE2"
-fi
-
-# fasta reference sequence
-if [ -z "$FASTA" ]
-then
-  err "No reference FASTA provided"
-elif [ -f "$FASTA" ]
-then
-  mesg "Valid reference FASTA: $FASTA"
-else
-  err "Invalid reference FASTA: $FASTA"
-fi
-
-# kraken2 database
-if [ -d "$KDB" ]
-then
-  mesg "Kraken2 database directory: $KDB"
-else
-  err "Invalid kraken2 database directory: $KDB"
-fi
-
-# vodka executable
-if [ -f "$VODKA" ]
-then
-  mesg "VODKA executable: $VODKA"
-else
-  err "Invalid VODKA executable: $VODKA"
+  err "Invalid second FASTQ file: $R2"
 fi
 
 # done checking inputs!
 mesg "Done checking inputs!"
 echo ""
 
-## kraken2 classification ---------------------------------------
-mesg "STEP 1: KRAKEN2 CONTAMINANT CHECK"
+## contaminant check --------------------------------------------
+mesg "STEP 1: CONTAMINANT CHECK"
 
-# make sure gcc has been loaded
-module load gcc
+# build command based on whether has paired reads
+CMD="kraken2 --db '$KDIR' --threads 4 --output - --report '$ODIR/metagenomics.tsv' --use-names --gzip-compressed"
+if [ -z "$R2" ] # unpaired
+then
+  CMD="$CMD '$R1'"
+else # paired
+  CMD="$CMD --paired '$R1' '$R2'"
+fi
 
-# build and execute command
-CMD="kraken2 --threads 16 --paired --db '$KDB' --output '$ODIR/kraken2-output.tsv' --report '$ODIR/kraken2-report.tsv' --use-names --gzip-compressed '$R1' '$R2'"
+# run classification
 mesg "CMD: $CMD"
 eval "$CMD"
-checkcmd "kraken2"
+checkcmd "Kraken2 metagenomic classification"
 echo ""
 
-## bowtie2 alignment --------------------------------------------
-mesg "STEP 2: BOWTIE2 ALIGNMENT"
+## alignment ----------------------------------------------------
+mesg "STEP 1: ALIGN TO GENOME"
 
-# load module
-module load bowtie2
-module load samtools
+# build command based on whether has paired reads
+if [ -z "$R2" ] # unpaired
+then
+  CMD="bowtie2 --threads 4 -x '$IDX' -U '$R1' > '$VAR.sam'"
+else # paired
+  CMD="bowtie2 --threads 4 -x '$IDX' -1 '$R1' -2 '$R2' > '$VAR.sam'"
+fi
 
-# build and execute alignment
-mesg "Align to virus reference sequence"
-CMD="bowtie2 --threads 16 -x '$BOWTIE2' -1 '$R1' '$R2' > '$ODIR/alignment.sam'"
+# run alignment
 mesg "CMD: $CMD"
 eval "$CMD"
-checkcmd "bowtie2 alignment"
+checkcmd "Alignment"
 
-# compress and sort
-mesg "Compress and sort alignment"
-samtools view --threads 16 -b -h "$ODIR/alignment.sam" > "$ODIR/alignment.bam"
-samtools sort --threads 16 --reference "$FASTA" -o "$ODIR/alignment-sorted.bam" --output-fmt BAM "$ODIR/alignment.bam"
-
-# clean up intermediate files
-rm "$ODIR/alignment.sam"
-rm "$ODIR/alignment.bam"
-mv "$ODIR/alignment-sorted.bam" "$ODIR/alignment.bam"
-echo ""
-
-## coverage -----------------------------------------------------
-mesg "STEP 3: CALCULATE COVERAGE"
-
-# build command and run
-CMD="samtools depth -a -H -d 0 -o '$ODIR/coverage.tsv' '$ODIR/alignment.bam'"
+# compress SAM to BAM
+CMD="samtools view --threads 4 -b -h '$VAR.sam' > '$VAR-raw.bam'"
 mesg "CMD: $CMD"
 eval "$CMD"
-checkcmd "coverage"
+checkcmd "Compression"
+rm "$VAR.sam"
 echo ""
 
-## lofreq and SNV calling ---------------------------------------
+## soft-clip primers --------------------------------------------
+mesg "STEP 2: CLIP PRIMERS"
 
+# soft-clipping primers with samtools ampliconclip
+CMD="samtools ampliconclip --threads 4 -b '$BED' '$VAR-raw.bam' -o '$VAR-clipped.bam'"
+mesg "CMD: $CMD"
+eval "$CMD"
+checkcmd "Primer clipping"
+rm "$VAR-raw.bam"
+echo ""
 
-## print package versions ---------------------------------------
-mesg "FIN. PIPELINE COMPLETED SUCCESSFULLY."
-kraken2 --version
+## process BAM --------------------------------------------------
+mesg "STEP 3: PROCESS BAM"
+
+# sort BAM
+CMD="samtools sort --threads 4 '$VAR-clipped.bam' > '$VAR-sorted.bam'"
+mesg "CMD: $CMD"
+eval "$CMD"
+checkcmd "Sorting"
+rm "$VAR-clipped.bam"
+
+# score indels to get final BAM
+CMD="$LOFREQ indelqual --dindel --ref '$REFSEQ' '$VAR-sorted.bam' > '$VAR.bam'"
+mesg "CMD: $CMD"
+eval "$CMD"
+checkcmd "Indelqual"
+rm "$VAR-sorted.bam"
+
+# index final BAM
+CMD="samtools index '$VAR.bam'"
+mesg "CMD: $CMD"
+eval "$CMD"
+checkcmd "Indexing"
+echo ""
+
+## calculate coverage -------------------------------------------
+mesg "STEP 4: CALCULATE COVERAGE"
+
+# coverage with samtools depth
+CMD="samtools depth --threads 4 -a -H '$VAR.bam' > '$VAR.tsv'"
+mesg "CMD: $CMD"
+eval "$CMD"
+checkcmd "Coverage"
+echo ""
+
+## assemble consensus -------------------------------------------
+mesg "STEP 5: ASSEMBLE CONSENSUS"
+
+# consensus with samtools
+CMD="samtools consensus --threads 4 --use-qual --min-depth 10 --call-fract 0.5 --output '$VAR-tmp.fa' '$VAR.bam'"
+mesg "CMD: $CMD"
+eval "$CMD"
+checkcmd "Consensus"
+
+# update consensus header
+mesg "Updating consensus header"
+echo ">$ID" > "$VAR.fa"
+cat "$VAR-tmp.fa" | grep "^[^>]" >> "$VAR.fa"
+rm "$VAR-tmp.fa"
+echo ""
+
+## quantify SNVs ------------------------------------------------
+mesg "STEP 6: QUANTIFY SNVs"
+
+# run lofreq
+# keeping mapping quality parameters same between samtools and LoFreq
+CMD="$LOFREQ call-parallel --pp-threads 4 --call-indels --min-cov 10 --ref '$REFSEQ' '$VAR.bam' > '$VAR.vcf'"
+mesg "CMD: $CMD"
+eval "$CMD"
+checkcmd "LoFreq"
+echo ""
+
+## package version ----------------------------------------------
+mesg "Pipeline complete! Printing package versions..."
 module list
+echo "LoFreq"
+$LOFREQ version
 echo ""
-
+samtools --version
+echo "" 
