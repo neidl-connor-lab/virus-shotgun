@@ -2,7 +2,7 @@
 
 # qsub options
 #$ -l h_rt=24:00:00
-#$ -pe omp 4
+#$ -pe omp 8
 #$ -j y
 #$ -o log-$JOB_NAME.qlog
 
@@ -23,7 +23,7 @@ checkcmd () {
 LOFREQ="pipeline/lofreq/lofreq"
 KDB="pipeline/kraken2db"
 # help message
-HELP="usage: qsub -P PROJECT -N JOBNAME $0 -i INDEX -f FASTA -s SAMPLE -x R1 [-y R2]
+HELP="usage: qsub -P PROJECT -N JOBNAME $0 -i INDEX -f FASTA -o ODIR -x R1 [-y R2]
 Please submit the job from the pipeline directory!
 
 arguments:
@@ -108,7 +108,7 @@ else
 fi
 
 # kraken2 db shoudl have 4 files
-if [ "$(ls -1 $KDB 2> /dev/null | wc -l)" -ne 4 ]
+if [ "$(ls -1 $KDB 2> /dev/null | wc -l)" -ne 11 ]
 then
   err "Invalid Kraken2 database; rerun setup.sh"
 fi
@@ -166,7 +166,7 @@ echo ""
 mesg "STEP 1: CONTAMINANT CHECK"
 
 # build command based on whether has paired reads
-CMD="kraken2 --db '$KDIR' --threads 4 --output - --report '$ODIR/metagenomics.tsv' --use-names --gzip-compressed"
+CMD="kraken2 --db '$KDB' --threads 8 --output - --report '$ODIR/metagenomics.tsv' --use-names --gzip-compressed"
 if [ -z "$R2" ] # unpaired
 then
   CMD="$CMD '$R1'"
@@ -181,14 +181,14 @@ checkcmd "Kraken2 metagenomic classification"
 echo ""
 
 ## alignment ----------------------------------------------------
-mesg "STEP 1: ALIGN TO GENOME"
+mesg "STEP 2: ALIGN TO GENOME"
 
 # build command based on whether has paired reads
 if [ -z "$R2" ] # unpaired
 then
-  CMD="bowtie2 --threads 4 -x '$IDX' -U '$R1' > '$VAR.sam'"
+  CMD="bowtie2 --threads 8 -x '$IDX' -U '$R1' > '$ODIR/alignment.sam'"
 else # paired
-  CMD="bowtie2 --threads 4 -x '$IDX' -1 '$R1' -2 '$R2' > '$VAR.sam'"
+  CMD="bowtie2 --threads 8 -x '$IDX' -1 '$R1' -2 '$R2' > '$ODIR/alignment.sam'"
 fi
 
 # run alignment
@@ -197,43 +197,32 @@ eval "$CMD"
 checkcmd "Alignment"
 
 # compress SAM to BAM
-CMD="samtools view --threads 4 -b -h '$VAR.sam' > '$VAR-raw.bam'"
+CMD="samtools view --threads 8 -b -h '$ODIR/alignment.sam' > '$ODIR/alignment-raw.bam'"
 mesg "CMD: $CMD"
 eval "$CMD"
 checkcmd "Compression"
-rm "$VAR.sam"
-echo ""
-
-## soft-clip primers --------------------------------------------
-mesg "STEP 2: CLIP PRIMERS"
-
-# soft-clipping primers with samtools ampliconclip
-CMD="samtools ampliconclip --threads 4 -b '$BED' '$VAR-raw.bam' -o '$VAR-clipped.bam'"
-mesg "CMD: $CMD"
-eval "$CMD"
-checkcmd "Primer clipping"
-rm "$VAR-raw.bam"
+rm "$ODIR/alignment.sam"
 echo ""
 
 ## process BAM --------------------------------------------------
 mesg "STEP 3: PROCESS BAM"
 
 # sort BAM
-CMD="samtools sort --threads 4 '$VAR-clipped.bam' > '$VAR-sorted.bam'"
+CMD="samtools sort --threads 8 '$ODIR/alignment-raw.bam' > '$ODIR/alignment-sorted.bam'"
 mesg "CMD: $CMD"
 eval "$CMD"
 checkcmd "Sorting"
-rm "$VAR-clipped.bam"
+rm "$ODIR/alignment-raw.bam"
 
 # score indels to get final BAM
-CMD="$LOFREQ indelqual --dindel --ref '$REFSEQ' '$VAR-sorted.bam' > '$VAR.bam'"
+CMD="$LOFREQ indelqual --dindel --ref '$REFSEQ' '$ODIR/alignment-sorted.bam' > '$ODIR/alignment.bam'"
 mesg "CMD: $CMD"
 eval "$CMD"
 checkcmd "Indelqual"
-rm "$VAR-sorted.bam"
+rm "$ODIR/alignment-sorted.bam"
 
 # index final BAM
-CMD="samtools index '$VAR.bam'"
+CMD="samtools index '$ODIR/alignment.bam'"
 mesg "CMD: $CMD"
 eval "$CMD"
 checkcmd "Indexing"
@@ -243,7 +232,7 @@ echo ""
 mesg "STEP 4: CALCULATE COVERAGE"
 
 # coverage with samtools depth
-CMD="samtools depth --threads 4 -a -H '$VAR.bam' > '$VAR.tsv'"
+CMD="samtools depth --threads 8 -a -H '$ODIR/alignment.bam' > '$ODIR/coverage.tsv'"
 mesg "CMD: $CMD"
 eval "$CMD"
 checkcmd "Coverage"
@@ -253,16 +242,16 @@ echo ""
 mesg "STEP 5: ASSEMBLE CONSENSUS"
 
 # consensus with samtools
-CMD="samtools consensus --threads 4 --use-qual --min-depth 10 --call-fract 0.5 --output '$VAR-tmp.fa' '$VAR.bam'"
+CMD="samtools consensus --threads 8 --use-qual --min-depth 10 --call-fract 0.5 --output '$ODIR/consensus-tmp.fa' '$ODIR/alignment.bam'"
 mesg "CMD: $CMD"
 eval "$CMD"
 checkcmd "Consensus"
 
 # update consensus header
 mesg "Updating consensus header"
-echo ">$ID" > "$VAR.fa"
-cat "$VAR-tmp.fa" | grep "^[^>]" >> "$VAR.fa"
-rm "$VAR-tmp.fa"
+echo ">$ID" > "$ODIR/consensus.fa"
+cat "$ODIR/consensus-tmp.fa" | grep "^[^>]" >> "$ODIR/consensus.fa"
+rm "$ODIR/consensus-tmp.fa"
 echo ""
 
 ## quantify SNVs ------------------------------------------------
@@ -270,7 +259,7 @@ mesg "STEP 6: QUANTIFY SNVs"
 
 # run lofreq
 # keeping mapping quality parameters same between samtools and LoFreq
-CMD="$LOFREQ call-parallel --pp-threads 4 --call-indels --min-cov 10 --ref '$REFSEQ' '$VAR.bam' > '$VAR.vcf'"
+CMD="$LOFREQ call-parallel --pp-threads 8 --call-indels --min-cov 10 --ref '$REFSEQ' '$ODIR/alignment.bam' > '$ODIR/snvs.vcf'"
 mesg "CMD: $CMD"
 eval "$CMD"
 checkcmd "LoFreq"
@@ -279,6 +268,8 @@ echo ""
 ## package version ----------------------------------------------
 mesg "Pipeline complete! Printing package versions..."
 module list
+kraken2 --version
+echo ""
 echo "LoFreq"
 $LOFREQ version
 echo ""

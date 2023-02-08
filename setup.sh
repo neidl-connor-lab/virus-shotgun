@@ -1,7 +1,7 @@
 #!/bin/bash -l
 
 # qsub options
-#$ -l h_rt=24:00:00
+#$ -l h_rt=12:00:00
 #$ -l mem_total=1000G
 #$ -j y
 #$ -o log-$JOB_NAME.qlog
@@ -124,7 +124,7 @@ echo ""
 
 ## set up Kraken2 if necessary ----------------------------------
 # check for kraken dir; should contain 4 files
-if [ -d "$KDIR" ] && [ "$(ls -1 $KDIR 2> /dev/null | wc -l)" -eq 4 ]
+if [ -d "$KDIR" ] && [ "$(ls -1 $KDIR 2> /dev/null | wc -l)" -eq 11 ]
 then
   mesg "Kraken2 database is ready to go!"
 # if any problem with the folder or it doesn't exists, make a new db
@@ -136,20 +136,28 @@ else
     rm -r "$KDIR"
   fi
   
-  # move into the pipeline directory and pull tarball
-  cd "pipeline/"
+  # move into the pipeline directory and check for tarball
+  cd "$(dirname $KDIR)"
+  if [ -f "$(basename $KLINK)" ] # tarball pulled
+  then
+    # remove tarball and pull fresh
+    rm "$(basename $KLINK)"
+  fi
+  
+  # pull fresh tarball
   mesg "Pulling database tarball..."
   wget --quiet "$KLINK"
   checkcmd "Pulling tarball"
   
   # expand the tarball
   mesg "Expanding database tarball..."
-  tar -xf "$(basename $KLINK)"
+  mkdir "$(basename $KDIR)"
+  tar -xf "$(basename $KLINK)" -C "$(basename $KDIR)"
   checkcmd "Expanding tarball"
   
   # clean up and move back up
+  kraken2-build --clean --db "$KDIR"
   rm "$(basename $KLINK)"
-  mv "$(basename $KLINK .tar.gz)" "$KDIR"
   cd ..
 fi
 echo ""
