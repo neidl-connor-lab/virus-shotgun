@@ -29,7 +29,7 @@ Create an alignment index from a reference sequence FASTA file, and write it to 
 Run `setup.sh` with the `-h` flag to view the full list of options.
 
 ```
-./setup.sh -h
+bash setup.sh -h
 ```
 
 
@@ -82,7 +82,7 @@ If you would like to make another index, just run `setup.sh` again!k It will be 
 View pipeline options and required arguments by running `pipeline.sh` with the `-h` flag.
 
 ```
-./pipeline.sh -h
+bash pipeline.sh -h
 ```
 
 The help message indicates the required arguments and how to pass them:
