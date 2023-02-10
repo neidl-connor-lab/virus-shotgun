@@ -156,7 +156,9 @@ else
   checkcmd "Expanding tarball"
   
   # clean up and move back up
-  kraken2-build --clean --db "$KDIR"
+  mesg "Cleaning up..."
+  kraken2-build --clean --db "$(basename $KDIR)"
+  checkcmd "Cleanup"
   rm "$(basename $KLINK)"
   cd ..
 fi

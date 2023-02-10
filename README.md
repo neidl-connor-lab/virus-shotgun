@@ -73,7 +73,7 @@ qstat -u $(whoami)
 ls pipeline/*
 ```
 
-If you would like to make another index, just run `setup.sh` again!k It will be much faster the second time since it will skip the Lofreq and Kraken2 setup.
+If you would like to make another index, just run `setup.sh` again! It will be much faster the second time since it will skip the Lofreq and Kraken2 setup.
 
 ### 3. Run pipeline
 
