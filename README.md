@@ -1,14 +1,17 @@
 # virus-shotgun
-v1.0 by Jackie T.
+v2.0 by Jackie T.
 
 ## Requirements
-
-Computing cluster access to [Bowtie2](https://doi.org/10.1038%2Fnmeth.1923) and [SAMtools](http://www.htslib.org/download/). Either a local installation or with a [module](https://www.bu.edu/tech/support/research/software-and-programming/software-and-applications/modules/) works!
+Computing cluster access to [bowtie2](https://doi.org/10.1038%2Fnmeth.1923), [samtools](http://www.htslib.org/download/), and [R](https://www.r-project.org/) modules are required. Local installations have not been tested.
 
 | Package   | Version |
 | :-------- | :------ |
 | bowtie2   | 2.4.2   |
-| samtools  | 1.15.1  |
+| htslib    | 1.18    |
+| samtools  | 1.18    |
+| R         | 4.0.2   |
+
+You will also need to install [kraken2](https://ccb.jhu.edu/software/kraken2/) either locally or globally.
 
 ## Quick start
 
@@ -29,9 +32,8 @@ Create an alignment index from a reference sequence FASTA file, and write it to 
 Run `setup.sh` with the `-h` flag to view the full list of options.
 
 ```
-bash setup.sh -h
+./setup.sh -h
 ```
-
 
 | Flag | Argument                                  |
 | :--- | :---------------------------------------- |
@@ -41,15 +43,15 @@ bash setup.sh -h
 | `-b` | bowtie2 index ID                          |
 
 ```
-usage: qsub -P PROJECT -N JOBNAME setup.sh -f FASTA -b BOWTIE
+usage: qsub -P PROJECT -N JOBNAME ./setup.sh -f FASTA -b BOWTIE
 
 arguments:
   -f virus genome FASTA file
-  -b bowtie2 index name
+  -b bowtie2 index path and prefix
   -h show this message and exit
 ```
 
-Here is an example where we download the [SARS-CoV-2 RefSeq](https://www.ncbi.nlm.nih.gov/nuccore/1798174254) and then run `setup.sh`. If this is your first time running `setup.sh` in the directory, it will unpack LoFreq and set up the standard Kraken2 database as well!
+Here is an example where we download the [SARS-CoV-2 RefSeq](https://www.ncbi.nlm.nih.gov/nuccore/1798174254) and then run `setup.sh`. If this is your first time running `setup.sh` in the directory, it will unpack LoFreq and set up the [standard Kraken2 database](https://benlangmead.github.io/aws-indexes/k2) as well!
 
 ```
 # download and decompress the reference
@@ -60,7 +62,7 @@ gunzip GCA_009858895.3_ASM985889v3_genomic.fna.gz
 mv GCA_009858895.3_ASM985889v3_genomic.fna pipeline/
 
 # submit the indexing job
-qsub -P test-project \
+qsub -P project \
      -N test-index \
      setup.sh \
      -f pipeline/GCA_009858895.3_ASM985889v3_genomic.fna \
@@ -82,7 +84,19 @@ If you would like to make another index, just run `setup.sh` again! It will be m
 View pipeline options and required arguments by running `pipeline.sh` with the `-h` flag.
 
 ```
-bash pipeline.sh -h
+$ pipeline.sh -h
+usage: qsub -P PROJECT -N JOBNAME ./pipeline.sh -i INDEX -f FASTA -o ODIR -s SAMPLE -x R1 [-y R2] [-t THLD]
+Please submit the job from the pipeline directory!
+
+arguments:
+  -i bowtie2 index path and prefix
+  -f reference FASTA
+  -o output directory
+  -s sample ID
+  -x FASTQ file; R1 file if paired reads
+  -y [OPTIONAL] R2 FASTQ file if paired reads
+  -t [OPTIONAL] minimum aligned read depth (default: 10)
+  -h print this message and exit
 ```
 
 The help message indicates the required arguments and how to pass them:
@@ -96,31 +110,21 @@ The help message indicates the required arguments and how to pass them:
 | `-o` | output directory                          |
 | `-x` | path to R1 or unpaired FASTQ file         |
 | `-y` | path to R2 FASTQ file (paired-read only)  |
+| `-t` | minimum aligned read depth threshold      |
+
+Here is an example where we're using the index we created in step 2. The job output will be written to a file named `log-test.qlog`. Fill in your own project allocation and FASTQ files!
 
 ```
-usage: qsub -P PROJECT -N JOBNAME pipeline.sh -i INDEX -f FASTA -o ODIR -x R1 [-y R2]
-Please submit the job from the pipeline directory!
-
-arguments:
-  -i bowtie2 index path and prefix
-  -f reference FASTA
-  -o output directory (e.g., sample ID)
-  -x FASTQ file; R1 file if paired reads
-  -y [OPTIONAL] R2 FASTQ file if paired reads
-  -h print this message and exit
-```
-
-Here is an example where we're using the index we created in step 2. The job output will be written to a file named `log-test-job.qlog`. Fill in your own project allocation and FASTQ files!
-
-```
-qsub -P test-project \
-     -N test-job \
-     pipeline.sh \ 
+qsub -P project \
+     -N test-pipeline \
+     pipeline.sh \
      -i pipeline/indices/sarscov2 \
      -f pipeline/GCA_009858895.3_ASM985889v3_genomic.fna \
-     -o test-job/ \
-     -x input-files/r1.fq.gz \
-     -y input-files/r2.fq.gz
+     -o data \
+     -s test \
+     -x test-r1.fq.gz \
+     -y test-r2.fq.gz \
+     -t 50
 ```
 
 ## Pipeline steps
@@ -136,35 +140,20 @@ Raw reads are passed to Kraken2 for metagenomic classification using the standar
 | `--output`          | raw output filename    |
 | `--report`          | report filename        |
 | `--use-names`       | use taxon names        |
-| `--gzip-compressed` | gzippped input         |
 | `--paired`          | paired reads           |
 | `*.fq.gz`           | input file(s)          |
 
 ```
 # paired
-kraken2 --threads 8 \
-        --db pipeline/kraken2db \
-        --output - \
-        --report odir/metagenomics.tsv \
-        --use-names \
-        --gzip-compressed \
-        --paired \
-        paired-r1.fq.gz \
-        paired-r2.fq.gz
+kraken2 --threads 4 --db pipeline/kraken2db --output - --report odir/sample/metagenomics.tsv --use-names --paired paired-r1.fq.gz paired-r2.fq.gz
 
 # unpaired
-kraken2 --threads 8 \
-        --db pipeline/kraken2db \
-        --output - \
-        --report odir/metagenomics.tsv \
-        --use-names \
-        --gzip-compressed \
-        unpaired.fq.gz
+kraken2 --threads 4 --db pipeline/kraken2db --output - --report odir/sample/metagenomics.tsv --use-names unpaired.fq.gz
 ```
 
 ### 2. Align to reference
 
-Raw FASTQ files are aligned to the previously-constructed reference using [Bowtie2](https://doi.org/10.1038%2Fnmeth.1923). All output file use `*/alignment` as a prefix. 
+Raw FASTQ files are aligned to the previously-constructed reference using [Bowtie2](https://doi.org/10.1038%2Fnmeth.1923). All output files are placed in a subdirectory named with the sample ID. 
 
 | Flag        | Meaning                |
 | :---------- | :--------------------- |
@@ -174,60 +163,42 @@ Raw FASTQ files are aligned to the previously-constructed reference using [Bowti
 | `-2`        | (paired) R2 FASTQ file |
 | `-U`        | (unpaired) FASTQ file  |
 | `*.sam`     | uncompressed alignment |
+| `*.log`     | bowtie2 output stats   |
 
 ```
 # paired
-bowtie2 --threads 4 \
-        -x pipeline/bowtie/index \
-        -1 paired-r1.fq.gz \
-        -2 paired-r2.fq.gz > \
-        odir/alignment.sam
+bowtie2 --threads 4 -x 'pipeline/bowtie/index' -1 'paired-r1.fq.gz' -2 'paired-r2.fq.gz' 1> 'odir/sample/alignment.sam' 2> 'odir/sample/bowtie2.log'
 
 # unpaired
-bowtie2 --threads 4 \
-        -x pipeline/bowtie/index \
-        -U unpaired.fq.gz > \
-        odir/alignment.sam
+bowtie2 --threads 4 -x 'pipeline/bowtie/index' -U 'unpaired.fq.gz' 1> 'odir/sample/alignment.sam' 2> 'odir/sample/bowtie2.log'
 ```
 
 The uncompressed SAM output is then compressed to BAM format.
 
 ```
 # compress
-samtools view --threads 4 \
-              -b \
-              -h \
-              odir/alignment.sam > \
-              odir/alignment-raw.bam
+samtools view --threads 4 -b -h 'odir/sample/alignment.sam' > 'odir/sample/alignment-raw.bam'
 ```
 
 ### 3. Process alignment
 
-These steps are get the alignment file ready for coverage, SNV, and consensus calling. We use SAMtools to sort the BAM, LoFreq to score insertions and deletions, and then SAMtools again to index the alignment.
+These steps prep the alignment file for coverage, SNV, and consensus calling. We use samtools to sort the BAM, LoFreq to score insertions and deletions, and then samtools again to index the alignment.
 
-| Flag           | Meaning                      |
-| :------------- | :--------------------------- |
-| `--threads`    | parallelize this job         |
-| `*-raw.bam`    | alignment from step 2        |
-| `*-sorted.bam` | sorted alignment             |
-| `--dindel`     | algorithm for scoring indels |
-| `--ref`        | reference FASTA file         |
-| `*.bam`        | final alignment file         |
+| Flag            | Meaning                      |
+| :-------------- | :--------------------------- |
+| `--threads`     | parallelize this job         |
+| `*-clipped.bam` | alignment from step 2        |
+| `*-sorted.bam`  | sorted alignment             |
+| `--dindel`      | algorithm for scoring indels |
+| `--ref`         | reference FASTA file         |
+| `alignment.bam` | final alignment file         |
 
 ```
-# sort alignment
-samtools sort --threads 4 \
-              odir/alignment-raw.bam > \
-              odir/alignment-sorted.bam
+samtools sort --threads 4 'odir/sample/alignment-clipped.bam' > 'odir/sample/alignment-sorted.bam'
 
-# score indels
-lofreq indelqual --dindel \
-                 --ref reference.fa \
-                 odir/alignment-sorted.bam > \
-                 odir/alignment.bam
+lofreq indelqual --dindel --ref 'reference.fa' 'odir/sample/alignment-sorted.bam' > 'odir/sample/alignment.bam'
 
-# index alignment
-samtools index odir/alignment.bam
+samtools index 'odir/sample/id.bam'
 ```
 
 ### 4. Calculate coverage
@@ -239,15 +210,11 @@ The `samtools depth` command calculates the aligned read depth for each nucleoti
 | `--threads`     | parallelize this job    |
 | `-a`            | include all nucleotides |
 | `-H`            | include a file header   |
-| `alignment.bam` | final aligment file     |
+| `alignment.bam` | final alignment file    |
 | `coverage.tsv`  | coverage table          |
 
 ```
-samtools depth --threads 4 \
-               -a \
-               -H \
-               odir/alignment.bam > \
-               odir/coverage.tsv
+samtools depth --threads 4 -a -H 'odir/sample/alignment.bam' > 'odir/sample/coverage.tsv'
 ```
 
 ### 5. Assemble consensus
@@ -259,17 +226,12 @@ The `samtools consensus` command assembles a consensus by examining the reads al
 | `--threads`     | parallelize this job         |
 | `--use-qual`    | use quality scores           |
 | `--min-depth`   | minimum aligned read depth   |
-| `--call-fract`  | minimum nucleotide frequency |
+| `--call-fract`  | minimum SNV frequency        |
 | `--output`      | output FASTA file            |
 | `alignment.bam` | final aligment file          |
 
 ```
-samtools consensus --threads 4 \
-                   --use-qual \
-                   --min-depth 10 \
-                   --call-fract 0.5 \
-                   --output odir/consensus.fa \
-                   odir/alignment.bam
+samtools consensus --threads 4 --use-qual --min-depth 10 --call-fract 0.5 --output 'odir/sample/consensus.fa' 'odir/sample/alignment.bam'
 ```
 
 ### 6. Quantify SNVs
@@ -283,13 +245,19 @@ Use LoFreq to make a detailed table of consensus and sub-consensus SNVs.
 | `--min-cov`     | minimum aligned read depth |
 | `--ref`         | reference FASTA file       |
 | `alignment.bam` | final alignment file       |
-| `snvs.vcf`      | output SNV table           |
+| `snvs.vcf`      | output VCF                 |
 
 ```
-lofreq call-parallel --pp-threads 4 \
-                     --call-indels \
-                     --min-cov 10 \
-                     --ref reference.fa \
-                     odir/alignment.bam > \
-                     odir/snvs.vcf
+lofreq call-parallel --pp-threads 4 --call-indels --min-cov 10 --ref 'reference.fa' 'odir/sample/alignment.bam' > 'odir/sample/snvs.vcf'
+```
+
+Use R to format the VCF file into a more human-readable CSV format.
+
+| Flag      | Meaning    |
+| :-------- | :--------- |
+| `--vcf`   | LoFreq VCF |
+| `--ofile` | CSV output |
+
+```
+Rscript pipeline/format.r --vcf 'odir/sample/snvs.vcf' --ofile 'odir/sample/snvs.csv'
 ```
