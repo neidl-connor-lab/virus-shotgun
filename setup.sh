@@ -57,11 +57,9 @@ echo "=========================================================="
 echo ""
 
 ## check inputs ----------------------------------------------------------------
-# check for Kraken2 install
-if [ -z "$(which kraken2 2> /dev/null)" ]
-then
-  err "No Kraken2 detected. Please install before using."
-fi
+# load kraken2
+module load kraken2/2.1.2
+checkcmd "Loading kraken2"
 
 # load bowtie2
 module load bowtie2/2.4.2
@@ -174,6 +172,6 @@ eval "$CMD"
 checkcmd "Bowtie2 index"
 echo ""
 
-## all done -----------------------------------------------------
+## all done --------------------------------------------------------------------
 mesg "Setup complete!"
 module list
