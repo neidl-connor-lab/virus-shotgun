@@ -78,12 +78,6 @@ echo ""
 ## check inputs ----------------------------------------------------------------
 mesg "STEP 0: CHECKING INPUTS"
 
-# if no kraken, fail
-if [ -z "$(which kraken2 2> /dev/null)" ]
-then
-  err "No Kraken2 found. Please install and try again."
-fi
-
 # double-check that lofreq exists
 if [ -z "$($LOFREQ version 2> /dev/null)" ]
 then
@@ -95,6 +89,10 @@ if [ ! -f "$FORMAT" ]
 then 
   err "VCF formatting script not detected: $FORMAT"
 fi
+
+# load kraken2 module
+module load kraken2/2.1.2
+checkcmd "Loading kraken2"
 
 # load bowtie2 module
 module load bowtie2/2.4.2
@@ -309,8 +307,6 @@ echo ""
 ## package version ----------------------------------------------
 mesg "Pipeline complete! Printing package versions..."
 module list
-kraken2 --version
-echo ""
 echo "LoFreq"
 $LOFREQ version
 echo ""
