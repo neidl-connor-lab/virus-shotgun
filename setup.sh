@@ -2,11 +2,10 @@
 
 # qsub options
 #$ -l h_rt=12:00:00
-#$ -l mem_total=1000G
 #$ -j y
 #$ -o log-$JOB_NAME.qlog
 
-## setup --------------------------------------------------------
+## setup -----------------------------------------------------------------------
 # functions
 mesg () { echo -e "[MSG] $@"; }
 err () { echo -e "[ERR] $@"; exit 1; }
@@ -20,7 +19,6 @@ checkcmd () {
 }
 
 # pre-set variables
-BDIR="pipeline/indices"
 LOFREQ="pipeline/lofreq"
 KDIR="pipeline/kraken2db"
 KLINK="https://genome-idx.s3.amazonaws.com/kraken/k2_standard_20221209.tar.gz"
@@ -29,7 +27,7 @@ HELP="usage: qsub -P PROJECT -N JOBNAME $0 -f FASTA -b BOWTIE
 
 arguments:
   -f virus genome FASTA file
-  -b bowtie2 index name
+  -b bowtie2 index path and prefix
   -h show this message and exit"
 
 # parsing arguments
@@ -48,7 +46,7 @@ do
 done
 shift $((OPTIND -1))
 
-## print job info for output log --------------------------------
+## print job info for output log -----------------------------------------------
 echo "=========================================================="
 echo "Start date: $(date)"
 echo "Running on node: $(hostname)"
@@ -58,26 +56,21 @@ echo "Job ID : $JOB_ID"
 echo "=========================================================="
 echo ""
 
-## check inputs -------------------------------------------------
+## check inputs ----------------------------------------------------------------
 # check for Kraken2 install
 if [ -z "$(which kraken2 2> /dev/null)" ]
 then
   err "No Kraken2 detected. Please install before using."
 fi
 
-# if no bowtie2, load module
-if [ -z "$(bowtie2 --version 2> /dev/null)" ]
-then
-  module load bowtie2
-  checkcmd "Loading bowtie2"
-fi
+# load bowtie2
+module load bowtie2/2.4.2
+checkcmd "Loading bowtie2" 
 
-# if no samtools, load module
-if [ -z "$(samtools version 2> /dev/null)" ]
-then
-  module load samtools
-  checkcmd "Loading samtools"
-fi
+# load samtools module 
+module load htslib/1.18
+module load samtools/1.18
+checkcmd "Loading samtools"
 
 # check reference FASTA
 if [ -z "$FASTA" ]
@@ -98,11 +91,18 @@ else
   mesg "Bowtie2 index prefix: $BOWTIE"
 fi
 
+# make bowtie index output directory if necessary
+if [ ! -d "$(dirname $BOWTIE)" ]
+then
+  mesg "Creating bowtie2 index directory: $(dirname $BOWTIE)"
+  mkdir -p "$(dirname $BOWTIE)"
+fi
+
 # done checking inputs!
 mesg "Done checking inputs!"
 echo ""
 
-## unpack LoFreq if necessary -----------------------------------
+## unpack LoFreq if necessary --------------------------------------------------
 # check for lofreq tarball
 if [ -f "$LOFREQ.tar.bz2" ]
 then 
@@ -122,7 +122,7 @@ else
 fi
 echo ""
 
-## set up Kraken2 if necessary ----------------------------------
+## set up Kraken2 if necessary -------------------------------------------------
 # check for kraken dir; should contain 4 files
 if [ -d "$KDIR" ] && [ "$(ls -1 $KDIR 2> /dev/null | wc -l)" -eq 11 ]
 then
@@ -137,10 +137,10 @@ else
   fi
   
   # move into the pipeline directory and check for tarball
+  # if it's there, remove it and pull a fresh one
   cd "$(dirname $KDIR)"
   if [ -f "$(basename $KLINK)" ] # tarball pulled
   then
-    # remove tarball and pull fresh
     rm "$(basename $KLINK)"
   fi
   
@@ -164,17 +164,11 @@ else
 fi
 echo ""
 
-## make index ---------------------------------------------------
-mesg "Creating Bowtie2 index: $BDIR/$BOWTIE"
-
-# create directory for bowtie2 if it doesn't already exist
-if [ ! -d "$BDIR" ]
-then
-  mkdir -p "$BDIR"
-fi
+## make index ------------------------------------------------------------------
+mesg "Creating Bowtie2 index: $BOWTIE"
 
 # build command and execute
-CMD="bowtie2-build --quiet '$FASTA' '$BDIR/$BOWTIE'"
+CMD="bowtie2-build --quiet '$FASTA' '$BOWTIE'"
 mesg "CMD: $CMD"
 eval "$CMD"
 checkcmd "Bowtie2 index"
