@@ -1,3 +1,4 @@
 testdata*
 pipeline/kraken2db/
 pipeline/lofreq/
+pipeline/indices/

@@ -120,8 +120,8 @@ else
   err "Invalid bowtie2 index; run setup.sh first: $IDX"
 fi
 
-# kraken2 db should have 12 files
-if [ "$(ls -1 $KDB 2> /dev/null | wc -l)" -ne 12 ]
+# kraken2 db should have 11 files
+if [ "$(ls -1 $KDB 2> /dev/null | wc -l)" -ne 11 ]
 then
   err "Invalid Kraken2 database; rerun setup.sh"
 fi
