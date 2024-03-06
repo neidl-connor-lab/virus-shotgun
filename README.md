@@ -1,5 +1,5 @@
 # virus-shotgun
-v2.0 by Jackie T.
+v2.2 by Jackie T.
 
 ## Requirements
 Computing cluster access to [kraken2](https://ccb.jhu.edu/software/kraken2/), [bowtie2](https://doi.org/10.1038%2Fnmeth.1923), [samtools](http://www.htslib.org/download/), and [R](https://www.r-project.org/) modules are required. Local installations have not been tested.
@@ -24,9 +24,9 @@ git clone https://github.com/neidl-connor-lab/virus-shotgun.git
 cd virus-shotgun
 ```
 
-### 2. Run `setup.sh` to set up [LoFreq](https://doi.org/10.1093%2Fnar%2Fgks918), [Kraken2](https://doi.org/10.1186/s13059-019-1891-0), and make an index
+### 2. Run `setup.sh` to set up [LoFreq](https://doi.org/10.1093%2Fnar%2Fgks918), [Kraken2](https://doi.org/10.1186/s13059-019-1891-0), [R](https://www.r-project.org/), and make an index
 
-Create an alignment index from a reference sequence FASTA file, and write it to `pipeline/indices/`. Most viruses have an official NCBI [RefSeq](https://www.ncbi.nlm.nih.gov/refseq/). This script will also set up LoFreq and the standard Kraken2 database in your `pipeline/` directory. 
+Create an alignment index from a reference sequence FASTA file, and write it to `pipeline/indices/`. Most viruses have an official NCBI [RefSeq](https://www.ncbi.nlm.nih.gov/refseq/). This script will also set up LoFreq and the standard Kraken2 database in your `pipeline/` directory. It will also install the necessary R libraries (`argparse` and `tidyverse`).
 
 Run `setup.sh` with the `-h` flag to view the full list of options.
 
