@@ -3,7 +3,6 @@
 ## setup -----------------------------------------------------------------------
 rm(list=ls(all.names=TRUE))
 suppressPackageStartupMessages(library(tidyverse))
-suppressPackageStartupMessages(library(Biostrings))
 suppressPackageStartupMessages(library(argparse))
 options(stringsAsFactors=FALSE)
 
