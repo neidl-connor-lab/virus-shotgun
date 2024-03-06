@@ -70,6 +70,10 @@ module load htslib/1.18
 module load samtools/1.18
 checkcmd "Loading samtools"
 
+# load R
+module load R/4.0.2
+checkcmd "Loading R"
+
 # check reference FASTA
 if [ -z "$FASTA" ]
 then
@@ -160,6 +164,12 @@ else
   rm "$(basename $KLINK)"
   cd ..
 fi
+echo ""
+
+## install R libraries ---------------------------------------------------------
+mesg "Installing argparse and tidyverse R libraries"
+R --quiet --no-save -e 'if(!dir.exists(Sys.getenv("R_LIBS_USER"))) { dir.create(Sys.getenv("R_LIBS_USER"), recursive=TRUE) }; suppressWarnings(install.packages(c("tidyverse", "argparse"), repos="http://cran.us.r-project.org", quiet=TRUE, verbose=FALSE, dependencies=TRUE, lib=Sys.getenv("R_LIBS_USER")))'
+checkcmd "R library installation"
 echo ""
 
 ## make index ------------------------------------------------------------------
